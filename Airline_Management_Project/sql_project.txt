@@ -1,3 +1,17 @@
+//CREATE DATABASE//
+
+mysql> create database AirlineManagement;
+Query OK, 1 row affected (0.15 sec)
+
+**************************************************************************************
+
+//USE DATABASE//
+
+mysql> use airlinemanagement;
+Database changed
+
+***************************************************************************************
+
 -- Passenger table --
 create table passenger(
     passenger_id int primary key auto_increment,
@@ -406,5 +420,6 @@ INSERT INTO aircraft_assignment (aircraft_id, flight_id, assignment_date) VALUES
  SET p.amount = f.price
  WHERE p.booking_id = 1
  AND f.seat_class = 'economy';
+
 
 
