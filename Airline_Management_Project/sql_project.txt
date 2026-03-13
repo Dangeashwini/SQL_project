@@ -1,0 +1,410 @@
+-- Passenger table --
+create table passenger(
+    passenger_id int primary key auto_increment,
+    pass_name varchar(50) not null,
+    gender enum('M','F','Other') not null,
+    date_of_birth date not null,
+    id_proof_type enum('passport','adhar','voter_id') not null,
+   id_proof_number varchar(30) not null unique,
+    mob_no bigint unique,
+    email varchar(100) unique
+
+);
+
+
+
+create table aircraft(
+    aircraft_id int primary key auto_increment,
+    reg_no varchar(20) not null unique,
+    model varchar(50) not null,
+    total_seats int not null check(total_seats>0)
+);
+
+
+create table flight
+(flight_id int primary key auto_increment,
+flight_no varchar(15) not null unique,
+source_airport int not null,
+destination_airport int not null,
+arrival_time datetime not null,
+departure_time datetime not null,
+aircraft_id int not null,
+check(source_airport <> destination_airport),
+foreign key(aircraft_id) references aircraft(aircraft_id),
+foreign key(source_airport) references airport(airport_id),
+foreign key(destination_airport) references airport(airport_id)
+
+);
+
+
+create table fare
+(fare_id int primary key auto_increment,
+seat_class enum('economy','premium_economy','business','first') not null,
+price decimal(10,2) not null,
+flight_id int not null,
+foreign key(flight_id) references flight(flight_id));
+
+
+
+create table booking
+(booking_id int primary key auto_increment,
+booking_date datetime not null,
+booking_status enum('confirmed','cancelled','pending') not null,
+passenger_id int not null,
+flight_id int not null,
+foreign key(passenger_id) references passenger(passenger_id),
+foreign key(flight_id) references flight(flight_id));
+
+
+
+create table payment
+(payment_id int primary key auto_increment,
+amount decimal(10,2) not null ,
+payment_status enum('pending','success','failed','refunded'),
+payment_date datetime not null,
+booking_id int not null,
+foreign key(booking_id) references booking(booking_id));
+
+
+create table crew
+(crew_id int primary key auto_increment,
+crew_name varchar(50) not null,
+role varchar(50) not null
+);
+
+
+
+create table itinerary
+(itinerary_id int primary key auto_increment,
+passenger_id int not null,
+foreign key(passenger_id) references passenger(passenger_id));
+
+
+create table itinerary_flight
+(itinerary_id int,
+flight_id int,
+flight_sequence int not null,
+foreign key(itinerary_id) references itinerary(itinerary_id),
+foreign key(flight_id) references flight(flight_id));
+
+
+create table crew_assignment
+(crew_id int,
+flight_id int,
+assignment_date datetime,
+foreign key(crew_id) references crew(crew_id),
+foreign key(flight_id) references flight(flight_id));
+
+
+create table aircraft_assignment
+(aircraft_id int,
+flight_id int,
+assignment_date datetime,
+foreign key(aircraft_id) references aircraft(aircraft_id),
+foreign key(flight_id) references flight(flight_id));
+
+
+
+CREATE TABLE airport (
+    airport_id INT PRIMARY KEY AUTO_INCREMENT,
+    city_name VARCHAR(50) UNIQUE,
+    latitude  DECIMAL(9,6) NOT NULL,
+    longitude DECIMAL(9,6) NOT NULL
+);
+
+
+
+delimiter #
+create trigger payment_update_booking
+after update on payment
+for each row
+begin
+if new.payment_status='success' then
+update booking
+set booking_status ='confirmed'
+where booking_id=new.booking_id;
+end if;
+end;
+#
+
+
+
+
+DELIMITER $$
+
+CREATE TRIGGER trg_manage_seats_on_booking_update
+AFTER UPDATE ON booking
+FOR EACH ROW
+BEGIN
+    DECLARE curr_seats INT;
+
+    -- Case 1: Booking CONFIRMED → reduce seat
+    IF NEW.booking_status = 'confirmed'
+       AND OLD.booking_status <> 'confirmed' THEN
+
+        UPDATE aircraft a
+        JOIN flight f ON f.aircraft_id = a.aircraft_id
+        SET a.total_seats = a.total_seats - 1
+        WHERE f.flight_id = NEW.flight_id;
+
+    END IF;
+
+    -- Case 2: Booking CANCELLED or PENDING after CONFIRM → increase seat
+    IF OLD.booking_status = 'confirmed'
+       AND NEW.booking_status IN ('cancelled','pending') THEN
+
+        UPDATE aircraft a
+        JOIN flight f ON f.aircraft_id = a.aircraft_id
+        SET a.total_seats = a.total_seats + 1
+        WHERE f.flight_id = NEW.flight_id;
+
+    END IF;
+
+    -- Safety check: no negative seats
+    SELECT a.total_seats
+    INTO curr_seats
+    FROM aircraft a
+    JOIN flight f ON f.aircraft_id = a.aircraft_id
+    WHERE f.flight_id = NEW.flight_id;
+
+    IF curr_seats < 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'No seats available';
+    END IF;
+
+END$$
+
+DELIMITER ;
+
+
+ CREATE TRIGGER calculate_fare_before_insert
+     BEFORE INSERT ON fare
+     FOR EACH ROW
+     BEGIN
+     DECLARE dist DECIMAL(10,2);
+   
+    -- Calculate distance using Haversine formula
+     SELECT 6371 * ACOS(
+     
+      COS(RADIANS(a1.latitude)) *
+      COS(RADIANS(a2.latitude)) *
+      COS(RADIANS(a2.longitude) - RADIANS(a1.longitude)) +
+      SIN(RADIANS(a1.latitude)) *
+      SIN(RADIANS(a2.latitude))
+      ) INTO dist
+      FROM flight fl
+      JOIN airport a1 ON fl.source_airport = a1.airport_id
+      JOIN airport a2 ON fl.destination_airport = a2.airport_id
+      WHERE fl.flight_id = NEW.flight_id;
+   
+       -- Multiply by seat class multiplier
+       SET NEW.price = ROUND(dist * 5 *
+          CASE
+              WHEN NEW.seat_class='economy' THEN 1.0
+                 WHEN NEW.seat_class='premium_economy' THEN 1.3
+               WHEN NEW.seat_class='business' THEN 1.8
+              WHEN NEW.seat_class='first' THEN 2.5
+          END
+       ,2);
+END;
+#
+
+
+
+ insert into airport (city_name, latitude, longitude) VALUES
+('Mumbai', 19.0896, 72.8656),
+('Delhi', 28.5562, 77.1000),
+('Bengaluru', 13.1986, 77.7066),
+('Hyderabad', 17.2403, 78.4294),
+('Chennai', 12.9941, 80.1709)
+('Kolkata', 22.5726, 88.3639),
+('Pune', 18.5204, 73.8567),
+('Jaipur', 26.9124, 75.7873),
+('Ahmedabad', 23.0225, 72.5714),
+('Goa', 15.2993, 74.1240);
+;
+
+
+INSERT INTO aircraft (reg_no, model, total_seats) VALUES
+('VT-AAA', 'Boeing 737', 180),
+('VT-BBB', 'Airbus A320', 160),
+('VT-IND01','Boeing 737',180),
+('VT-IND02','Boeing 737',160),
+('VT-IND03','Airbus A321',200),
+('VT-IND04','ATR 72',70),
+('VT-IND05','Boeing 787',250),
+('VT-IND06','Airbus A330',230),
+('VT-IND07','Boeing 777',300),
+('VT-IND08','ATR 42',50),
+;
+
+
+ INSERT INTO passenger 
+(pass_name, gender, date_of_birth, id_proof_type, id_proof_number, mob_no, email) 
+ VALUES
+('Ashwini Dange', 'F', '1995-07-10', 'adhar', '123456789012', 9876543210,   'ashwini@example.com'),
+('Rohit Kumar', 'M', '1990-03-15', 'passport', 'A1234567', 9123456780, 'rohit@example.com')
+('Amit Sharma','M','1990-05-10','passport','P12345',9876543240,'amit@gmail.com'),
+('Neha Verma','F','1995-07-15','adhar','A23456',9876543211,'neha@gmail.com'),
+('Rahul Mehta','M','1988-03-20','voter_id','V34567',9876543212,'rahul@gmail.com'),
+('Sneha Patil','F','1993-11-02','passport','P45678',9876543213,'sneha@gmail.com'),
+('Ravi Kumar','M','1985-09-18','adhar','A56789',9876543214,'ravi@gmail.com'),
+('Pooja Singh','F','1997-01-25','voter_id','V67890',9876543215,'pooja@gmail.com'),
+('Ankit Jain','M','1992-04-30','passport','P78901',9876543216,'ankit@gmail.com'),
+('Kiran Rao','M','1989-12-10','adhar','A89012',9876543217,'kiran@gmail.com');
+
+
+
+INSERT INTO flight (flight_no, source_airport, destination_airport, departure_time, 
+arrival_time, aircraft_id) VALUES
+('AI101', 1, 2, '2025-12-25 06:00:00', '2025-12-25 08:00:00', 1),
+('AI102', 2, 3, '2025-12-25 09:00:00', '2025-12-25 11:30:00', 2)
+('AI103',3,4,'2025-01-12 15:00','2025-01-12 12:30',3),
+('AI104',4,5,'2025-01-13 18:00','2025-01-13 15:00',4),
+('AI105',5,6,'2025-01-14 20:00','2025-01-14 17:30',5),
+('AI106',6,7,'2025-01-15 22:00','2025-01-15 19:00',6),
+('AI107',7,8,'2025-01-16 11:00','2025-01-16 08:00',7),
+('AI108',8,9,'2025-01-17 13:00','2025-01-17 10:00',8),
+('AI109',9,10,'2025-01-18 16:00','2025-01-18 13:00',9),
+('AI110',10,1,'2025-01-19 19:00','2025-01-19 16:00',10)
+;
+
+
+INSERT INTO booking (booking_date, booking_status, passenger_id, flight_id) VALUES
+(NOW(), 'pending', 1, 1),
+(NOW(), 'pending', 2, 2)
+(NOW(),'pending',5,5),
+(NOW(),'confirmed',6,6),
+(NOW(),'pending',7,7),
+(NOW(),'confirmed',8,8),
+(NOW(),'pending',9,9),
+(NOW(),'confirmed',10,10)
+;
+
+
+
+
+INSERT INTO payment (amount, payment_status, payment_date, booking_id) VALUES
+(0, 'pending', NOW(), 1),
+(0, 'pending', NOW(), 2)
+
+;
+
+mysql> select * from payment;
++------------+--------+----------------+---------------------+------------+
+| payment_id | amount | payment_status | payment_date        | booking_id |
++------------+--------+----------------+---------------------+------------+
+|          1 |   0.00 | pending        | 2025-12-26 00:07:23 |          1 |
+|          2 |   0.00 | pending        | 2025-12-26 00:07:23 |          2 |
++------------+--------+----------------+---------------------+------------+
+2 rows in set (0.00 sec)
+
+
+INSERT INTO fare (seat_class, flight_id, price) VALUES
+('economy', 1),
+('premium_economy', 1),
+('business', 1),
+('first', 1),
+('economy', 2),
+('premium_economy', 2),
+('business', 2),
+('first', 2)
+'economy',6),
+('business',7),
+('economy',8),
+('premium_economy',9),
+('first',10);
+;
+
+
+mysql> select * from fare;
++---------+-----------------+----------+-----------+
+| fare_id | seat_class      | price    | flight_id |
++---------+-----------------+----------+-----------+
+|       1 | economy         |  5685.25 |         1 |
+|       2 | premium_economy |  7390.83 |         1 |
+|       3 | business        | 10233.45 |         1 |
+|       4 | first           | 14213.13 |         1 |
+|       5 | economy         |  8544.20 |         2 |
+|       6 | premium_economy | 11107.46 |         2 |
+|       7 | business        | 15379.56 |         2 |
+|       8 | first           | 21360.50 |         2 |
++---------+-----------------+----------+-----------+
+8 rows in set (0.00 sec)
+
+
+
+
+INSERT INTO crew (crew_name, role) VALUES
+('Captain A','Pilot'),
+('Captain B','Pilot'),
+('Riya','Cabin Crew'),
+('John','Cabin Crew'),
+('Sara','Cabin Crew')
+('Vikas','Engineer'),
+  ('Neeraj','Pilot'),
+ ('Ritu','Cabin Crew'),
+  ('Deepak','Engineer'),
+   ('Kavita','Cabin Crew'),
+    ('Sanjay','Co-Pilot');
+;
+
+
+INSERT INTO itinerary (passenger_id) VALUES
+(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+
+INSERT INTO itinerary_flight (itinerary_id, flight_id, flight_sequence) VALUES
+(1,1,1),
+(2,2,1),
+(1,1,1),
+(2,2,1),
+(3,5,1),
+(4,6,1),
+(5,7,1),
+(6,8,1),
+(7,9,1),
+(8,10,1),
+(9,11,1),
+(10,12,1)
+(2, 2, 1),  -- first flight
+(2, 5, 2),  -- second flight (connecting)
+(2, 7, 3); 
+;
+
+
+INSERT INTO crew_assignment (crew_id, flight_id, assignment_date) VALUES
+(1,1,NOW()),
+(3,1,NOW()),
+(2,2,NOW()),
+(4,2,NOW()),
+(5,5,NOW()),
+(6,6,NOW()),
+(7,7,NOW()),
+(8,8,NOW()),
+(9,9,NOW()),
+(10,10,NOW());
+;
+
+INSERT INTO aircraft_assignment (aircraft_id, flight_id, assignment_date) VALUES
+(1,1,NOW()),
+(2,2,NOW()),
+(5,5,NOW()),
+(6,6,NOW()),
+(7,7,NOW()),
+(8,8,NOW()),
+(9,9,NOW()),
+(10,10,NOW());
+
+
+
+
+
+
+ UPDATE payment p
+ JOIN booking b ON b.booking_id = p.booking_id
+ JOIN fare f ON f.flight_id = b.flight_id
+ SET p.amount = f.price
+ WHERE p.booking_id = 1
+ AND f.seat_class = 'economy';
+
+
